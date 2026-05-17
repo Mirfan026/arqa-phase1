@@ -1,0 +1,29 @@
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables and secrets
+.env
+*.key
+hf_token.txt
+
+# OS files
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Project data — kept locally, not on GitHub
+data/state/
+data/outputs/
+data/rag_index/
+*.dxf
+*.dwg
+
+# Logs
+*.log
