@@ -18,12 +18,20 @@ desktop.ini
 .vscode/
 .idea/
 
-# Project data — kept locally, not on GitHub
+# Project data — large/binary files kept locally, not on GitHub
 data/state/
 data/outputs/
 data/rag_index/
+data/building_codes/**/*.pdf
+data/building_codes/**/*.docx
+data/datasets/*.zip
 *.dxf
 *.dwg
+
+# Keep curated text knowledge + folder markers in the repo
+!data/building_codes/**/*.md
+!data/building_codes/**/.gitkeep
+!data/datasets/*.json
 
 # Logs
 *.log
