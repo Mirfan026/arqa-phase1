@@ -5,7 +5,7 @@ The system's front door. Takes a free-text client brief (EN/UR/AR)
 and turns it into a structured requirements object the downstream
 agents (Design, Report, Supervisor) can act on.
 
-Pipeline:  detect language  ->  LLM extraction  ->  parse to schema
+Pipeline:  detect language  ->  LLM extraction  ->  parse  ->  completeness check
 
 Author: Muhammad Irfan
 """
@@ -19,6 +19,11 @@ from arqa.language_detector import detect_language
 load_dotenv()
 
 MODEL = "Qwen/Qwen2.5-7B-Instruct"
+
+# Fields the system genuinely CANNOT proceed without (must ask the client).
+# floors/budget/plot_size are intentionally NOT here — the system can offer
+# options or proceed with defaults for those (range->scenarios design decision).
+ESSENTIAL_FIELDS = ["country", "project_type"]
 
 # The instruction we give the LLM. It describes the EXACT schema and
 # tells the model how to handle synonyms, exact numbers, and ranges.
@@ -54,6 +59,11 @@ RULES:
   bedrooms = beds = BR. Map them all to the correct field.
 - Map currency words: riyal/SAR, dirham/AED, rupee/PKR, qatari riyal/QAR.
 - If a field is not mentioned, use null.
+- CRITICAL: Set "country" ONLY if the brief explicitly names a country or a city.
+  Do NOT infer country from cultural cues (e.g. mention of a majlis does NOT imply Saudi Arabia).
+  If no country or city is stated, country MUST be null.
+- Set budget.currency ONLY if a currency is named OR a country is explicitly stated.
+  If neither, currency MUST be null. Never guess location or currency.
 - cultural_flags: only include flags clearly implied by the brief.
 - Return ONLY the JSON. No explanation.
 
@@ -73,15 +83,12 @@ def _get_client():
 def _parse_json(raw_text):
     """
     Robustly parse the LLM's response into a Python dict.
-
     LLMs sometimes wrap JSON in ```json fences or add stray text.
-    We strip fences and extract the outermost {...} block.
     """
     text = raw_text.strip()
 
     # Remove markdown code fences if present
     if text.startswith("```"):
-        # drop the first line (``` or ```json) and the trailing ```
         text = text.split("```", 2)[1]
         if text.startswith("json"):
             text = text[4:]
@@ -99,6 +106,32 @@ def _parse_json(raw_text):
     return json.loads(text)
 
 
+def check_completeness(data):
+    """
+    Decide whether the brief has enough essential info to proceed,
+    or whether the Supervisor must ask the client clarifying questions.
+
+    Adds two fields:
+      - missing_required: list of essential fields that are null/empty
+      - ready_for_design: True if nothing essential is missing
+    """
+    missing = []
+
+    for field in ESSENTIAL_FIELDS:
+        if not data.get(field):          # null, empty string, or missing
+            missing.append(field)
+
+    # Rooms are essential too: need at least ONE room type specified
+    rooms = data.get("rooms") or {}
+    has_any_room = any(v for v in rooms.values())
+    if not has_any_room:
+        missing.append("rooms")
+
+    data["missing_required"] = missing
+    data["ready_for_design"] = (len(missing) == 0)
+    return data
+
+
 def extract_requirements(brief, max_tokens=800):
     """
     Turn a free-text client brief into a structured requirements dict.
@@ -106,7 +139,8 @@ def extract_requirements(brief, max_tokens=800):
     Steps:
       1. Detect the brief's language (EN/UR/AR)  [Day 3]
       2. Ask the LLM to extract into the English schema  [Day 2 client]
-      3. Parse the JSON and attach metadata
+      3. Parse the JSON
+      4. Check completeness (flag missing essential fields)
 
     Returns the structured requirements dict (the 'blackboard' entry).
     """
@@ -134,10 +168,11 @@ def extract_requirements(brief, max_tokens=800):
         data = {}
         parse_ok = False
 
-    # 4. Attach metadata and return
+    # 4. Attach metadata and check completeness
     data["language"] = language
     data["raw_brief"] = brief
     data["_parse_ok"] = parse_ok
+    data = check_completeness(data)      # flag missing essential fields
     return data
 
 
@@ -153,8 +188,18 @@ if __name__ == "__main__":
 
     print("Extracting requirements from brief...\n")
     result = extract_requirements(test_brief)
-
     print("=" * 60)
     print("STRUCTURED REQUIREMENTS")
     print("=" * 60)
     print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    # --- Stress test: a vague, messy, real-world brief ---
+    messy_brief = (
+        "looking for a biggish family home, maybe 3 or 4 beds, ground plus one, "
+        "nothing too fancy, decent budget not sure exactly maybe 800k-ish, "
+        "really want privacy from the street and somewhere to receive male guests separately"
+    )
+    print("\n\n" + "=" * 60)
+    print("MESSY BRIEF STRESS TEST")
+    print("=" * 60)
+    print(json.dumps(extract_requirements(messy_brief), indent=2, ensure_ascii=False))
