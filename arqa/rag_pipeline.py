@@ -114,18 +114,121 @@ def load_chunks(input_path="data/rag_index/chunks.json"):
     print(f"Loaded {len(chunks)} chunks from {input_path}")
     return chunks
 
+# Heading regex (see Day 6 design):
+#   ^          start of a line (MULTILINE)
+#   [A-K]?     optional letter prefix (Dubai's K.5.3.2, B.6...)
+#   \d+        digits
+#   (?:\.\d+)+ at least one ".digits" group  -> kills bare page numbers
+#   \s+        space(s)
+#   [A-Z][a-z] start of a Capitalized title  -> kills measurements / ALL-CAPS
+HEADING_RE = re.compile(r"^([A-K]?\d+(?:\.\d+)+)\s+[A-Z][a-z]", re.MULTILINE)
+
+
+def split_page_into_sections(page_chunk):
+    """
+    Split one per-page chunk into finer section-chunks.
+
+    Uses HEADING_RE to find where each section starts, then slices
+    the page text between consecutive headings. Each resulting chunk
+    keeps the page's metadata + the detected section number.
+
+    If a page has no detectable headings, it is returned unchanged
+    as a single chunk (so we never lose content).
+    """
+    text = page_chunk["text"]
+
+    # Find all heading matches and where they start in the text
+    matches = list(HEADING_RE.finditer(text))
+
+    # No headings on this page -> keep the whole page as one chunk
+    if not matches:
+        return [{
+            "text": text,
+            "source_file": page_chunk["source_file"],
+            "country": page_chunk["country"],
+            "pdf_page": page_chunk["pdf_page"],
+            "section": None,
+        }]
+
+    sections = []
+
+    # Text before the first heading (page header, leftover from prev section)
+    # is attached to nothing — we skip it to avoid noise. (It's usually
+    # page labels like "MEANS OF EGRESS SBC 201 2007 8/13".)
+
+    for i, match in enumerate(matches):
+        start = match.start()
+        # This section runs until the next heading (or end of page)
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+
+        section_text = text[start:end].strip()
+        section_number = match.group(1)   # the captured number, e.g. "8.8.1"
+
+        sections.append({
+            "text": section_text,
+            "source_file": page_chunk["source_file"],
+            "country": page_chunk["country"],
+            "pdf_page": page_chunk["pdf_page"],
+            "section": section_number,
+        })
+
+    return sections
+
+def build_section_chunks(page_chunks_path="data/rag_index/chunks.json",
+                          output_path="data/rag_index/section_chunks.json"):
+    """
+    Load the cached per-page chunks, split each into section-chunks,
+    and save the finer-grained result.
+
+    Returns the list of section-chunks.
+    """
+    page_chunks = load_chunks(page_chunks_path)
+
+    section_chunks = []
+    pages_with_headings = 0
+
+    for page_chunk in page_chunks:
+        sections = split_page_into_sections(page_chunk)
+        # A page "had headings" if it produced sections WITH a section number
+        if any(s["section"] is not None for s in sections):
+            pages_with_headings += 1
+        section_chunks.extend(sections)
+
+    # Save the section-chunks
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(section_chunks, f, ensure_ascii=False, indent=2)
+
+    # Report what happened
+    print(f"Pages processed:        {len(page_chunks)}")
+    print(f"Pages with headings:    {pages_with_headings}")
+    print(f"Section-chunks created: {len(section_chunks)}")
+    with_section = sum(1 for c in section_chunks if c["section"] is not None)
+    print(f"  - with section number: {with_section}")
+    print(f"  - whole-page (no heading detected): {len(section_chunks) - with_section}")
+    print(f"Saved to {output_path}")
+
+    return section_chunks
 
 if __name__ == "__main__":
-    chunks = build_all_chunks()
+    # Day 6: build section-chunks from the cached page-chunks.
+    section_chunks = build_section_chunks()
 
-    # Save chunks to JSON so indexing/retrieval can load them instantly
-    save_chunks(chunks)
+    # Collect samples first
+    samples = [c for c in section_chunks if c["section"] is not None][:3]
+    fallbacks = [c for c in section_chunks if c["section"] is None][:2]
 
-    # Show a sample chunk so we can see the structure + metadata
-    print("\n=== Sample chunk (a middle one) ===")
-    sample = chunks[len(chunks) // 2]
-    print(f"Source:   {sample['source_file']}")
-    print(f"Country:  {sample['country']}")
-    print(f"PDF page: {sample['pdf_page']}")
-    print(f"Sections detected: {sample['sections_detected'][:10]}")
-    print(f"Text preview: {sample['text'][:300]}")
+    # Print clean section-chunks
+    print("\n=== Sample section-chunks ===")
+    for s in samples:
+        print(f"\n[{s['country']} | {s['source_file']} p.{s['pdf_page']} | "
+              f"section {s['section']}]")
+        preview = " ".join(s["text"].split())[:250]
+        print(f"  {preview}")
+
+    # Print whole-page fallbacks
+    print("\n=== Sample whole-page fallbacks (no heading detected) ===")
+    for s in fallbacks:
+        print(f"\n[{s['country']} | {s['source_file']} p.{s['pdf_page']} | no section]")
+        preview = " ".join(s["text"].split())[:250]
+        print(f"  {preview}")
