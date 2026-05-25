@@ -1,5 +1,5 @@
 """
-ARQA Phase 1 — Communication Agent (Day 8)
+ARQA Phase 1 — Communication Agent (Day 8, updated Day 10–11)
 
 The system's front door. Takes a free-text client brief (EN/UR/AR)
 and turns it into a structured requirements object the downstream
@@ -55,7 +55,7 @@ Return ONLY a JSON object (no markdown, no commentary) with EXACTLY this structu
 RULES:
 - An EXACT number is a range with equal min and max. "5 floors" -> {"min":5,"max":5}.
 - A RANGE keeps both. "2 to 3 floors" -> {"min":2,"max":3}.
--- Recognize SYNONYMS across languages and romanized forms. Map all to the correct field:
+- Recognize SYNONYMS across languages and romanized forms. Map all to the correct field:
   - floors = storeys = stories = levels = manzil/manzila = tabaq/taba2/taba2een; "G+2" = 3 floors.
   - bedrooms = beds = BR = kamre/kamray = ghuraf nom/ghuraf naum/ghuraf.
   - bathrooms = hammam/7ammam/7ammamat; kitchen = matbakh; living = salon/saala/drawing room.
@@ -64,9 +64,12 @@ RULES:
   exactly as stated (e.g. "5 marla", "1 kanal").
 - Map currency words: riyal/SAR, dirham/AED, rupee/PKR, qatari riyal/QAR.
 - If a field is not mentioned, use null.
-- CRITICAL: Set "country" ONLY if the brief explicitly names a country or a city.
-  Do NOT infer country from cultural cues (e.g. mention of a majlis does NOT imply Saudi Arabia).
-  If no country or city is stated, country MUST be null.
+- CRITICAL: If the brief explicitly NAMES a country or a city (e.g. "Lahore", "Dubai",
+  "Riyadh"), you MUST set "country" to the matching country — even if other cultural cues
+  in the text might suggest a different region. An explicitly named place ALWAYS wins.
+  (Lahore/Karachi/Islamabad -> pakistan; Riyadh/Jeddah -> saudi_arabia; Dubai/Abu Dhabi -> uae.)
+  Do NOT INFER country from cultural cues alone (e.g. a majlis does NOT by itself imply Saudi
+  Arabia). If no country or city is named anywhere, country MUST be null.
 - Set budget.currency ONLY if a currency is named OR a country is explicitly stated.
   If neither, currency MUST be null. Never guess location or currency.
 - cultural_flags: only include flags clearly implied by the brief.
