@@ -55,8 +55,13 @@ Return ONLY a JSON object (no markdown, no commentary) with EXACTLY this structu
 RULES:
 - An EXACT number is a range with equal min and max. "5 floors" -> {"min":5,"max":5}.
 - A RANGE keeps both. "2 to 3 floors" -> {"min":2,"max":3}.
-- Recognize SYNONYMS: floors = storeys = stories = levels; "G+2" = 3 floors.
-  bedrooms = beds = BR. Map them all to the correct field.
+-- Recognize SYNONYMS across languages and romanized forms. Map all to the correct field:
+  - floors = storeys = stories = levels = manzil/manzila = tabaq/taba2/taba2een; "G+2" = 3 floors.
+  - bedrooms = beds = BR = kamre/kamray = ghuraf nom/ghuraf naum/ghuraf.
+  - bathrooms = hammam/7ammam/7ammamat; kitchen = matbakh; living = salon/saala/drawing room.
+  - majlis = baithak/bethak (guest sitting room) = guest room for receiving visitors.
+- Land/plot units: "marla", "kanal", "gaz" (South Asia), "dunum" (Gulf) -> put in plot_size
+  exactly as stated (e.g. "5 marla", "1 kanal").
 - Map currency words: riyal/SAR, dirham/AED, rupee/PKR, qatari riyal/QAR.
 - If a field is not mentioned, use null.
 - CRITICAL: Set "country" ONLY if the brief explicitly names a country or a city.
