@@ -1,21 +1,29 @@
 """
-ARQA Phase 1 — Design Agent (Day 12)
+ARQA Phase 1 — Design Agent
 
 Procedural floor-plan generator. Reads the blackboard's structured
-requirements (rooms, plot) and produces a layout: each room placed as
-a non-overlapping rectangle inside the plot, via simple row-packing.
+requirements (rooms, plot) and produces a layout: each room placed as a
+non-overlapping rectangle inside the plot.
 
-Explainable by design (every placement has a stated reason) — the
-baseline that the Phase-2 learned generator will improve on.
+Placement uses CULTURAL ZONING (the privacy gradient): rooms are grouped
+into guest / shared / private zones and stacked front-to-back, so the
+majlis (guest reception) sits at the entrance and the bedrooms (private
+family) sit at the rear — a documented principle of Gulf/Islamic
+residential architecture, encoded as an explainable procedural prior.
+The first bathroom becomes a guest WC in the shared zone (accessible to
+guests without entering the private zone); the rest stay with the family.
+
+Explainable by design (every placement records a reason) — the baseline
+that the Phase-2 learned generator will improve on.
 
 Author: Muhammad Irfan
 """
 
 import math
 
-# Default floor areas (square metres) per room type.
-# Defaults only — refinable later from client input or building-code minimums.
-# Majlis is generously sized: guest reception is culturally important (Gulf).
+# Default floor areas (m^2) per room type. Targets/minimums — refinable later
+# from client input or building-code minimums. Majlis is generously sized:
+# guest reception is culturally important (Gulf).
 DEFAULT_AREAS = {
     "bedrooms": 12.0,
     "bathrooms": 4.0,
@@ -33,7 +41,7 @@ KANAL_TO_M2 = 505.86  # 1 kanal = 20 marla
 
 
 def _room_min(req_value):
-    """Read a {min,max} room value's min (the count). None/0 if absent."""
+    """Read a {min,max} room value's min (the count). 0 if absent."""
     if isinstance(req_value, dict):
         return req_value.get("min") or 0
     return 0
@@ -42,9 +50,7 @@ def _room_min(req_value):
 def expand_rooms(requirements):
     """
     Turn the requirements' room COUNTS into a flat list of room instances,
-    each with a type, a label, and a default area.
-
-    e.g. bedrooms {min:2} -> [Bedroom 1 (12 m2), Bedroom 2 (12 m2)]
+    each with a type, a label, and a default (target) area.
     """
     rooms = requirements.get("rooms") or {}
     instances = []
@@ -54,7 +60,6 @@ def expand_rooms(requirements):
         for i in range(count):
             singular = {"bedrooms": "Bedroom", "bathrooms": "Bathroom"}
             label = singular.get(room_type, room_type.capitalize())
-            label = label.capitalize()
             if count > 1:
                 label = f"{label} {i + 1}"
             instances.append({"type": room_type, "label": label, "area": area})
@@ -87,14 +92,13 @@ def parse_plot_area(plot_size):
         return value * KANAL_TO_M2
     if "sqft" in s or "sq ft" in s or "square feet" in s:
         return value * 0.0929
-    # default: treat as square metres (sqm, m2, or bare number)
-    return value
+    return value     # default: square metres
 
 
 def compute_plot(rooms, plot_size=None):
     """
     Decide plot dimensions (width, height in metres).
-      - If plot_size given: use that total area.
+      - If plot_size given and larger than rooms: use it.
       - Else: total room area * circulation factor.
     Returns (width, height, total_area, source).
     """
@@ -108,7 +112,7 @@ def compute_plot(rooms, plot_size=None):
         total_area = rooms_area * CIRCULATION_FACTOR
         source = f"computed (rooms {rooms_area:.0f} m2 x {CIRCULATION_FACTOR})"
 
-    # Make a sensible rectangle (slightly wider than tall: 1.25 aspect ratio).
+    # Sensible rectangle (slightly wider than tall: 1.25 aspect ratio).
     height = math.sqrt(total_area / 1.25)
     width = total_area / height
     return round(width, 1), round(height, 1), round(total_area, 1), source
@@ -116,16 +120,12 @@ def compute_plot(rooms, plot_size=None):
 
 def pack_rooms(rooms, plot_w, plot_h):
     """
-    Row-packing placement. Place rooms left-to-right in rows of fixed
-    height; wrap to a new row when the current row is full.
-
-    Returns a list of placed rooms with x, y, w, h (metres) and a reason.
+    Row-packing placement (Day-12 baseline; kept for reference).
+    Superseded as the default by zone_place() — see generate_layout().
     """
     if not rooms:
         return []
 
-    # Row height: divide plot height into enough rows for the rooms.
-    # Start with a row height that gives roughly square-ish rooms.
     n = len(rooms)
     rows_estimate = max(1, round(math.sqrt(n)))
     row_h = plot_h / rows_estimate
@@ -135,14 +135,11 @@ def pack_rooms(rooms, plot_w, plot_h):
     row_index = 1
 
     for room in rooms:
-        w = room["area"] / row_h            # width so that w * row_h = area
-
-        # If this room would overflow the row, wrap to the next row.
+        w = room["area"] / row_h
         if x + w > plot_w + 0.01 and x > 0:
             x = 0.0
             y += row_h
             row_index += 1
-
         placed.append({
             **room,
             "x": round(x, 1), "y": round(y, 1),
@@ -154,22 +151,97 @@ def pack_rooms(rooms, plot_w, plot_h):
     return placed
 
 
-def generate_layout(requirements):
-    """
-    Main entry point: requirements dict -> a layout dict.
+# ── Cultural zoning: the privacy gradient ───────────────────────────────
+# Room type -> functional zone. Zones placed front-to-back as a PUBLIC ->
+# PRIVATE gradient — a documented principle of Gulf/Islamic residential
+# architecture. [cite architectural literature in Dossier]
+ZONE_OF = {
+    "majlis":    "guest",     # front — public, by the entrance
+    "living":    "shared",    # middle — semi-private family living
+    "kitchen":   "shared",
+    "bedrooms":  "private",   # rear — most private (family)
+    "bathrooms": "private",
+}
+ZONE_ORDER = ["guest", "shared", "private"]   # front -> back = public -> private
+ZONE_TITLE = {
+    "guest":   "Guest zone (front, by entrance)",
+    "shared":  "Shared family living (middle)",
+    "private": "Private family zone (rear)",
+}
 
-    Returns:
-      {
-        "rooms": [ {type,label,area,x,y,w,h,reason}, ... ],
-        "plot": {"width","height","area","source"},
-        "summary": "..."
-      }
+
+def zone_place(rooms, plot_w, plot_h):
     """
+    Privacy-gradient placement. Group rooms into zones (guest/shared/private),
+    stack the zones front-to-back as horizontal bands sized by each zone's
+    room area, and fill each band's width proportionally (no dead space).
+
+    Cultural rules encoded:
+      - majlis (guest) at the front near the entrance;
+      - bedrooms (private) at the rear, farthest from guests;
+      - first bathroom -> guest WC ("WC 1") in the SHARED zone (accessible
+        to guests without entering the private zone); the rest ("WC 2", ...)
+        stay private with the bedrooms.
+    """
+    if not rooms:
+        return []
+
+    total_area = sum(r["area"] for r in rooms)
+
+    # Group rooms by zone, preserving zone order.
+    by_zone = {z: [] for z in ZONE_ORDER}
+    guest_wc_assigned = False
+    for r in rooms:
+        zone = ZONE_OF.get(r["type"], "shared")
+        if r["type"] == "bathrooms":
+            if not guest_wc_assigned:
+                zone = "shared"                 # first bathroom -> guest WC
+                r = {**r, "label": "WC 1"}      # guest WC, in shared zone
+                guest_wc_assigned = True
+            else:
+                r = {**r, "label": "WC 2"}      # family WC, in private zone
+        by_zone[zone].append(r)
+
+    placed = []
+    y = 0.0
+
+    for zone in ZONE_ORDER:
+        zrooms = by_zone[zone]
+        if not zrooms:
+            continue
+
+        zone_area = sum(r["area"] for r in zrooms)
+        band_h = plot_h * (zone_area / total_area)
+
+        x = 0.0
+        for i, r in enumerate(zrooms):
+            rx = round(x, 1)
+            if i == len(zrooms) - 1:
+                rw = round(plot_w - rx, 1)      # last room snaps to right edge
+            else:
+                rw = round(plot_w * (r["area"] / zone_area), 1)
+
+            placed.append({
+                **r,
+                "x": rx, "y": round(y, 1),
+                "w": rw, "h": round(band_h, 1),
+                "zone": zone,
+                "reason": f"{ZONE_TITLE[zone]} — privacy gradient",
+            })
+            x = rx + rw                          # advance by rounded values
+
+        y += band_h
+
+    return placed
+
+
+def generate_layout(requirements):
+    """requirements dict -> layout dict (rooms placed, plot, summary)."""
     rooms = expand_rooms(requirements)
     plot_w, plot_h, total_area, source = compute_plot(
         rooms, requirements.get("plot_size")
     )
-    placed = pack_rooms(rooms, plot_w, plot_h)
+    placed = zone_place(rooms, plot_w, plot_h)   # privacy-gradient zoning
 
     return {
         "rooms": placed,
@@ -181,14 +253,9 @@ def generate_layout(requirements):
 
 
 def ascii_floorplan(layout, cols=60, rows=24):
-    """
-    Render the layout as an ASCII floor plan grid, so we can SEE it
-    in the terminal with zero dependencies.
-    """
+    """ASCII floor-plan grid for zero-dependency terminal preview."""
     plot_w = layout["plot"]["width"]
     plot_h = layout["plot"]["height"]
-
-    # Empty grid
     grid = [[" " for _ in range(cols)] for _ in range(rows)]
 
     def to_col(x):
@@ -202,15 +269,13 @@ def ascii_floorplan(layout, cols=60, rows=24):
         r0, r1 = to_row(room["y"]), to_row(room["y"] + room["h"])
         c1 = max(c1, c0 + 1)
         r1 = max(r1, r0 + 1)
-
-        # Draw border + a letter label inside
         letter = room["label"][0].upper()
         for r in range(r0, min(r1, rows)):
             for c in range(c0, min(c1, cols)):
                 if r in (r0, r1 - 1) or c in (c0, c1 - 1):
-                    grid[r][c] = "#"          # wall
+                    grid[r][c] = "#"
                 elif grid[r][c] == " ":
-                    grid[r][c] = letter       # room interior label
+                    grid[r][c] = letter
 
     border = "+" + "-" * cols + "+"
     lines = [border]
@@ -221,9 +286,6 @@ def ascii_floorplan(layout, cols=60, rows=24):
 
 
 if __name__ == "__main__":
-    import json
-
-    # A sample requirements dict (as the Communication Agent would produce).
     sample = {
         "project_type": "villa",
         "country": "saudi_arabia",
@@ -240,13 +302,14 @@ if __name__ == "__main__":
     layout = generate_layout(sample)
 
     print("=" * 64)
-    print("ARQA Design Agent — Procedural Layout (Day 12)")
+    print("ARQA Design Agent — Procedural Layout (cultural zoning)")
     print("=" * 64)
     print(layout["summary"])
     print()
-    print(f"{'Room':<14}{'Area':>7}{'x':>7}{'y':>7}{'w':>7}{'h':>7}")
+    print(f"{'Room':<12}{'Zone':<10}{'Target':>7}{'x':>7}{'y':>7}{'w':>7}{'h':>7}{'drawn':>8}")
     for r in layout["rooms"]:
-        print(f"{r['label']:<14}{r['area']:>6.0f}m{r['x']:>7}{r['y']:>7}"
-              f"{r['w']:>7}{r['h']:>7}")
+        drawn = round(r["w"] * r["h"], 1)
+        print(f"{r['label']:<12}{r.get('zone',''):<10}{r['area']:>6.0f}m"
+              f"{r['x']:>7}{r['y']:>7}{r['w']:>7}{r['h']:>7}{drawn:>7.1f}m")
     print()
     print(ascii_floorplan(layout))

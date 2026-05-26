@@ -36,3 +36,6 @@ data/datasets/*.zip
 # Logs
 *.log
 portfolio_evidence/
+# Generated floor-plan output (regenerated anytime)
+floorplan.svg
+*.svg
