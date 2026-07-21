@@ -163,3 +163,6 @@ if __name__ == "__main__":
 
     render_report_pdf(report, "arabic", "report_arabic.pdf")
     print("Wrote report_arabic.pdf")
+
+    render_report_pdf(report, "urdu", "report_urdu.pdf")
+    print("Wrote report_urdu.pdf")
