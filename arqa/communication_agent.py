@@ -18,7 +18,7 @@ from arqa.language_detector import detect_language
 
 load_dotenv()
 
-MODEL = "Qwen/Qwen2.5-7B-Instruct"
+MODEL = "Qwen/Qwen2.5-7B-Instruct:featherless-ai"
 
 # Fields the system genuinely CANNOT proceed without (must ask the client).
 # floors/budget/plot_size are intentionally NOT here — the system can offer

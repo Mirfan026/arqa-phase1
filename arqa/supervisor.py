@@ -6,14 +6,19 @@ state, runs the Communication Agent, and — when an essential field is
 missing — runs the CLARIFICATION LOOP: ask the client, fill the gap,
 re-check. The "ask, never guess" principle made real.
 
-Phase 1 scope: state management (blackboard) + brief validation /
-clarification. The Design and Report agents will plug into the same
-blackboard in later days.
+Also holds run_full_pipeline() (Day 18) — the TRUE end-to-end flow: brief
+-> clarification loop -> [only if ready] -> Design Agent -> Cost Estimator
+-> Compliance Checker -> trilingual PDF report. "Ask, never guess" applies
+here too: if the brief never reaches ready_for_design, the pipeline stops
+and reports what's missing rather than handing incomplete requirements
+downstream to be silently filled in.
 
 Author: Muhammad Irfan
 """
 
 from arqa.communication_agent import extract_requirements
+from arqa.report_agent import assemble_report
+from arqa.report_pdf import render_report_pdf
 
 # A human-readable question for each essential field the Supervisor
 # might need to ask the client about.
@@ -30,6 +35,7 @@ ANSWER_FRAMING = {
     "project_type": "The building type is: {answer}.",
     "rooms": "The rooms required are: {answer}.",
 }
+
 
 def make_blackboard(brief):
     """Create a fresh shared-state object for one project request."""
@@ -107,6 +113,45 @@ def process_brief(brief, answer_fn, max_rounds=3, verbose=True):
     return bb
 
 
+def run_full_pipeline(brief, answer_fn, language="english", out_path="report.pdf",
+                       max_rounds=3, verbose=True):
+    """
+    The true end-to-end flow (Day 18): brief -> (Communication Agent +
+    clarification loop) -> [only if ready] -> Design Agent -> Cost
+    Estimator -> Compliance Checker -> trilingual PDF report.
+
+    "Ask, never guess" extended to orchestration: if the brief never
+    reaches ready_for_design (something essential stays unanswered after
+    max_rounds), the pipeline STOPS and reports what's missing — it never
+    hands incomplete requirements downstream to be silently filled in.
+
+    Returns a dict:
+      { "status": "ready"/"incomplete", "blackboard": {...},
+        "report_path": <path or None> }
+    """
+    bb = process_brief(brief, answer_fn, max_rounds=max_rounds, verbose=verbose)
+
+    if bb["status"] != "ready":
+        if verbose:
+            print(f"\nPIPELINE STOPPED: brief incomplete after {max_rounds} "
+                  f"round(s). Missing: {bb['requirements']['missing_required']}")
+        return {"status": "incomplete", "blackboard": bb, "report_path": None}
+
+    if verbose:
+        print("\n-- Requirements ready. Continuing: Design -> Cost -> "
+              "Compliance -> Report --")
+
+    report_data = assemble_report(bb["requirements"])
+    bb["report"] = report_data   # write back to the blackboard
+
+    render_report_pdf(report_data, language, out_path)
+
+    if verbose:
+        print(f"Report written: {out_path}")
+
+    return {"status": "ready", "blackboard": bb, "report_path": out_path}
+
+
 if __name__ == "__main__":
     import json
 
@@ -145,3 +190,20 @@ if __name__ == "__main__":
     r = bb2["requirements"]
     print(f"   country = {r.get('country')}")
     print(f"   ready_for_design = {r.get('ready_for_design')}")
+
+    # TEST 3: full pipeline, complete brief -> should produce a real PDF.
+    print("\n" + "=" * 64)
+    print("TEST 3 — full pipeline (complete brief -> PDF)")
+    print("=" * 64)
+    result = run_full_pipeline(complete, canned_answers({}), out_path="pipeline_test.pdf")
+    print(f"\nPipeline status: {result['status']}")
+    print(f"Report path: {result['report_path']}")
+
+    # TEST 4: full pipeline, brief missing something the client never
+    # answers -> should STOP, not guess.
+    print("\n" + "=" * 64)
+    print("TEST 4 — full pipeline (client never answers -> should STOP)")
+    print("=" * 64)
+    result2 = run_full_pipeline(incomplete, canned_answers({}), out_path="pipeline_test2.pdf")
+    print(f"\nPipeline status: {result2['status']}")
+    print(f"Report path: {result2['report_path']}")
