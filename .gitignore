@@ -38,4 +38,6 @@ data/datasets/*.zip
 portfolio_evidence/
 # Generated floor-plan output (regenerated anytime)
 floorplan.svg
-*.svg
+*.
+# Generated report/test PDFs (regenerated anytime)
+*.pdf
